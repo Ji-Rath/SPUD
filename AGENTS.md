@@ -42,15 +42,15 @@ Save game and streaming level persistence for Unreal Engine 5.
 - Direct level streaming calls — use `USpudSubsystem` methods instead
 - Missing `StructUtils` plugin — required for serialization
 
-See `.claude/patterns.md` for implementation patterns.
+See `.agents/patterns.md` for implementation patterns.
 
 ## Integration Points
 
 - Used by: SUQS (quest persistence), SUQSFlow, HorrorFeatures
-- See `.claude/plugin-integration.md` for cross-plugin dependency matrix
+- See `.agents/plugin-integration.md` for cross-plugin dependency matrix
 
 ## Human Review Required
 
 - Changes to `ISpudObject` or `ISpudObjectCallback` interfaces
 - Changes to `USpudSubsystem` public API or save file format
-- See `.claude/human-review-checklist.md` for full list
+- See `.agents/human-review-checklist.md` for full list
