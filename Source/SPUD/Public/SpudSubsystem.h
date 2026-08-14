@@ -188,6 +188,10 @@ protected:
 	bool bPendingEndGame = false;
 	TOptional<TPair<bool, bool>> PendingNewGameArgs;
 
+	/// Active save-block reasons -> nesting count. While non-empty, all saves are refused inside SaveGame().
+	/// Game-thread only; not a UPROPERTY (no UObject refs, no GC concern). Cleared on map transition / EndGame.
+	TMap<FName, int32> SaveBlockers;
+
 	UPROPERTY()
 	TArray<TWeakObjectPtr<UObject>> GlobalObjects;
 	UPROPERTY()
@@ -304,6 +308,32 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="SPUD")
     bool IsIdle() const { return CurrentState == ESpudSystemState::RunningIdle; }
+
+	/**
+	 * Register a reason to block all save operations. Nestable: each AddSaveBlocker(Reason) must be
+	 * balanced by a matching RemoveSaveBlocker(Reason). While any blocker is active, SaveGame() (and
+	 * therefore QuickSaveGame/AutoSaveGame) refuses and broadcasts PostSaveGame(SlotName, false).
+	 * Blockers are cleared automatically on map transition and EndGame, so an actor destroyed before
+	 * it can remove its own blocker cannot permanently disable saving.
+	 * @param Reason Stable key identifying the blocking system (e.g. "Combat", "Cinematic", "Respawn").
+	 */
+	UFUNCTION(BlueprintCallable, Category="SPUD")
+	void AddSaveBlocker(FName Reason);
+
+	/**
+	 * Remove a previously-registered save blocker. Decrements the nesting count for Reason; the reason
+	 * is only cleared once its count reaches zero. Warns if Reason was never registered.
+	 */
+	UFUNCTION(BlueprintCallable, Category="SPUD")
+	void RemoveSaveBlocker(FName Reason);
+
+	/// True if any save blocker is currently active. Saves are refused while this is true.
+	UFUNCTION(BlueprintPure, Category="SPUD")
+	bool IsSaveBlocked() const { return !SaveBlockers.IsEmpty(); }
+
+	/// Returns the set of active save-block reasons (for logging / UI). Counts are not exposed.
+	UFUNCTION(BlueprintPure, Category="SPUD")
+	TArray<FName> GetSaveBlockers() const;
 
 	
 	/**

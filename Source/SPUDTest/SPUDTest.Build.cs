@@ -14,10 +14,16 @@ public class SPUDTest : ModuleRules
                 "Core",
                 "CoreUObject",
                 "Engine",
-                "SPUD",
-                "StructUtils"
+                "SPUD"
             }
         );
+
+        if (Target.Version.MajorVersion == 5 && Target.Version.MinorVersion < 5)
+        {
+            // FInstancedStruct moved into CoreUObject in UE5.5; the standalone
+            // StructUtils module is only needed on earlier engines.
+            PrivateDependencyModuleNames.Add("StructUtils");
+        }
         
         // Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

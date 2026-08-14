@@ -136,17 +136,27 @@ void USpudSubsystem::EndGame()
 
 	if (ActiveState)
 		ActiveState->ResetState();
-	
+
 	// Allow GC to collect
 	ActiveState = nullptr;
 
 	UnsubscribeAllLevelObjectEvents();
 	CurrentState = ESpudSystemState::Disabled;
 	IsRestoringState = false;
+	SaveBlockers.Empty();
 }
 
 void USpudSubsystem::AutoSaveGame(FText Title, bool bTakeScreenshot, const USpudCustomSaveInfo* ExtraInfo, const int32 UserIndex, bool bAsync)
 {
+	// Authoritative enforcement is the guard in SaveGame(); this early-out only prevents the
+	// numbered-slot cleanup below from deleting an old save for a save that will then be refused.
+	if (IsSaveBlocked())
+	{
+		UE_LOG(LogSpudSubsystem, Warning, TEXT("AutoSaveGame refused before slot cleanup: save is blocked"));
+		SaveComplete(SPUD_AUTOSAVE_SLOTNAME, UserIndex, false);
+		return;
+	}
+
 	FString SlotName;
 	FText DefaultTitle;
 
@@ -168,6 +178,15 @@ void USpudSubsystem::AutoSaveGame(FText Title, bool bTakeScreenshot, const USpud
 
 void USpudSubsystem::QuickSaveGame(FText Title, bool bTakeScreenshot, const USpudCustomSaveInfo* ExtraInfo, const int32 UserIndex, bool bAsync)
 {
+	// Authoritative enforcement is the guard in SaveGame(); this early-out only prevents the
+	// numbered-slot cleanup below from deleting an old save for a save that will then be refused.
+	if (IsSaveBlocked())
+	{
+		UE_LOG(LogSpudSubsystem, Warning, TEXT("QuickSaveGame refused before slot cleanup: save is blocked"));
+		SaveComplete(SPUD_QUICKSAVE_SLOTNAME, UserIndex, false);
+		return;
+	}
+
 	FString SlotName;
 	FText DefaultTitle;
 
@@ -318,7 +337,16 @@ void USpudSubsystem::OnPreLoadMap(const FString& MapName)
 	LevelRequests.Empty();
 	StopUnloadTimer();
 	MonitoredStreamingLevels.Empty();
-	
+
+	// Actors/abilities that pushed a save blocker are destroyed by travel without removing it.
+	// Clear so a leaked blocker can't permanently disable saving in the next map. Logged at Log
+	// (not Warning) because a surviving blocker at travel time is the expected case.
+	if (!SaveBlockers.IsEmpty())
+	{
+		UE_LOG(LogSpudSubsystem, Log, TEXT("Clearing %d save blocker(s) on map transition"), SaveBlockers.Num());
+		SaveBlockers.Empty();
+	}
+
 	FirstStreamRequestSinceMapLoad = true;
 
 	// When we transition out of a map while enabled, save contents
@@ -434,6 +462,16 @@ void USpudSubsystem::SaveGame(const FString& SlotName, const FText& Title, bool 
 	{
 		// TODO: ignore or queue?
 		UE_LOG(LogSpudSubsystem, Error, TEXT("TODO: Overlapping calls to save/load, resolve this"));
+		SaveComplete(SlotName, UserIndex, false);
+		return;
+	}
+
+	if (IsSaveBlocked())
+	{
+		const auto Reasons = GetSaveBlockers();
+		UE_LOG(LogSpudSubsystem, Warning, TEXT("Save to slot %s refused: blocked by %d reason(s) [%s]"),
+			*SlotName, Reasons.Num(),
+			*FString::JoinBy(Reasons, TEXT(", "), [](const FName& R){ return R.ToString(); }));
 		SaveComplete(SlotName, UserIndex, false);
 		return;
 	}
@@ -692,6 +730,48 @@ void USpudSubsystem::SaveComplete(const FString& SlotName, const int32 UserIndex
 		bPendingEndGame = false;
 		EndGame();
 	}
+}
+
+void USpudSubsystem::AddSaveBlocker(FName Reason)
+{
+	check(IsInGameThread());
+
+	if (Reason.IsNone())
+	{
+		UE_LOG(LogSpudSubsystem, Warning, TEXT("AddSaveBlocker called with NAME_None; ignoring"));
+		return;
+	}
+
+	const auto NewCount = ++SaveBlockers.FindOrAdd(Reason);
+	UE_LOG(LogSpudSubsystem, Verbose, TEXT("Save blocker added: %s (count %d, total reasons %d)"),
+		*Reason.ToString(), NewCount, SaveBlockers.Num());
+}
+
+void USpudSubsystem::RemoveSaveBlocker(FName Reason)
+{
+	check(IsInGameThread());
+
+	const auto Count = SaveBlockers.Find(Reason);
+	if (!Count)
+	{
+		UE_LOG(LogSpudSubsystem, Warning, TEXT("RemoveSaveBlocker(%s): reason was not registered"),
+			*Reason.ToString());
+		return;
+	}
+
+	if (--(*Count) <= 0)
+	{
+		SaveBlockers.Remove(Reason);
+		UE_LOG(LogSpudSubsystem, Verbose, TEXT("Save blocker cleared: %s (total reasons %d)"),
+			*Reason.ToString(), SaveBlockers.Num());
+	}
+}
+
+TArray<FName> USpudSubsystem::GetSaveBlockers() const
+{
+	TArray<FName> Reasons;
+	SaveBlockers.GetKeys(Reasons);
+	return Reasons;
 }
 
 void USpudSubsystem::HandleLevelLoaded(FName LevelName)

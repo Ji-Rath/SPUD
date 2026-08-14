@@ -32,9 +32,15 @@ public class SPUD : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"StructUtils",
 			}
 			);
+
+		if (Target.Version.MajorVersion == 5 && Target.Version.MinorVersion < 5)
+		{
+			// FInstancedStruct moved into CoreUObject in UE5.5; the standalone
+			// StructUtils module is only needed on earlier engines.
+			PrivateDependencyModuleNames.Add("StructUtils");
+		}
 		
 		
 		DynamicallyLoadedModuleNames.AddRange(
